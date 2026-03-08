@@ -80,14 +80,14 @@ The app consists of **three core screens**.
 
 #### My List
 
-Primary workspace where users manage their shopping list.
+Primary screen where users manage their shopping list.
 
 Features:
 
-- Item checklist
-- Store filter chips
+- Item checklist, check off as you add to cart
 - Mode toggle (Price / Store)
-- Floating add button
+- Tap the '$'' icon to compare store prices for an item. Tap an option to move item accordingly
+- View staples that are out of stock at the bottom and tap the '+' icon to add to list
 
 #### Staples
 
@@ -95,9 +95,8 @@ List of frequently purchased items.
 
 Features:
 
-- Tap to add staple to My List
-- Quick add new staple
-- Edit staple items
+- Add an existing item to staple list or a new item
+- Tap the flag icon when you notice the item is out of stock
 
 #### Item Screen
 
@@ -106,9 +105,9 @@ Used to create or edit an item.
 Fields:
 
 - Name
-- Price
-- Store
-- Category
+- Prices
+- Stores
+- Categories
 - Staple toggle
 
 ---
@@ -171,11 +170,10 @@ Items grouped by store.
 
 ## Stack and Technical Details
 
-- **Frontend Framework:** Nuxt 3 (Vue 3)
-- **Mobile Framework:** Nuxt + Ionic
-- **Native Wrapper:** Capacitor
-- **Storage:** Local storage using Ionic Storage
-- **Future Backend:** Supabase
+- **Frontend Framework:** React Native
+- **Mobile Framework:** Expo
+- **Storage:** Local storage
+- **Future Backend/db:** Supabase or Auth.js + vps postgres
 
 ---
 
@@ -215,28 +213,26 @@ items WHERE isStaple = true
 ### Immediate Wants
 
 - Price history tracking
-- Store comparison view
-- Auto-suggest previous items
+
 - Categories and sorting
 
 ---
 
 ### Nice-to-Haves
 
-- Barcode scanning
-- Shared shopping lists
-- Smart price alerts
+- Barcode scanning and/or pricetag picture reading
+- find way to notify of deals at tracked stores
 - Store location grouping
+- Auto-suggest previous items
 
 ---
 
 ### Premium Features
 
-- Cloud sync
+- login with cloud sync
 - Multi-device access
-- Shared household lists
+- Share household lists (changes "My List" to "Our List" would be a nice touch)
 - Price analytics
-- Store route optimization
 
 ---
 
@@ -254,7 +250,6 @@ Freemium model.
 
 - Cloud backup
 - Shared lists
-- Advanced price tracking
 - No ads
 
 ---
@@ -262,16 +257,16 @@ Freemium model.
 ## Open Questions & Risks
 
 1. **Multiple store prices per item?**
-   - V1 will support only one store per item.
+   - V1 will support one price per store (enforce no dublicates on store name per item).
 
 2. **Item persistence after completion**
-   - Completed items will remain available for reuse.
+   - Completed items will remain available for reuse. My List should have a "clear" button or perhaps should ask to clear checked items at end of day
 
 3. **Price accuracy**
-   - Prices are user-entered and may become outdated.
+   - Prices are user-entered and may become outdated. thats fine
 
 4. **Future backend migration**
-   - The local-first architecture should allow easy transition to cloud sync later.
+   - The local-first architecture should allow easy transition to cloud sync later. when logged in but no internet, there should be a clear red icon showing that user is in offline mode (tooltip says that changes will be synced when back online)
 
 ---
 
