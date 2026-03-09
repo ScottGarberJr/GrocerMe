@@ -9,7 +9,7 @@ This checklist breaks the V1 implementation into numbered tasks. Each task inclu
 ### 1.1 Initialize Expo / React Native App
 
 **Subtasks**
-- [ ] Install required CLI tools (Node, npm/yarn, Expo CLI).
+- [ ] Install required CLI tools (Node, npm, Expo CLI).
 - [ ] Create a new Expo project for GrocerMe.
 - [ ] Configure app name, icon placeholder, and bundle identifiers (namespace) for iOS/Android.
 - [ ] Verify the app runs on at least one physical device or simulator.
@@ -30,7 +30,7 @@ This checklist breaks the V1 implementation into numbered tasks. Each task inclu
 
 **Acceptance Criteria**
 - [ ] The project compiles with TypeScript without type errors.
-- [ ] `npm run lint` / `yarn lint` passes with no blocking issues.
+- [ ] `npm run lint` passes with no blocking issues.
 - [ ] Editor integration (VS Code) shows types and lint feedback.
 
 ---
