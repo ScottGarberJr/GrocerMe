@@ -1,11 +1,12 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { RootNavigator } from './src/navigation/RootNavigator';
-import { initializeDatabase } from './src/db/schema';
+import { ShoppingProvider } from './src/state/ShoppingContext';
 
 export default function App() {
-  useEffect(() => {
-    initializeDatabase();
-  }, []);
-
-  return <RootNavigator />;
+  return (
+    <ShoppingProvider>
+      <RootNavigator />
+    </ShoppingProvider>
+  );
 }
+

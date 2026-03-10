@@ -24,26 +24,23 @@ const mapRowToItem = (row: any): Item => ({
   updated_at: row.updated_at,
 });
 
-export const getActiveItems = async (): Promise<Item[]> => {
-  const db = getDb();
-  const result = await db.getAllAsync?.(
-    'SELECT * FROM items WHERE isCompleted = 0 ORDER BY created_at DESC',
-  );
-  return (result ?? []).map(mapRowToItem);
+const getItemsByQuery = async (
+  query: string,
+  params: any[] = [],
+): Promise<Item[]> => {
+  const db = await getDb();
+  const rows = await db.getAllAsync<any>(query, params);
+  return rows.map(mapRowToItem);
 };
 
-export const getStapleItems = async (): Promise<Item[]> => {
-  const db = getDb();
-  const result = await db.getAllAsync?.(
-    'SELECT * FROM items WHERE isStaple = 1 ORDER BY name ASC',
-  );
-  return (result ?? []).map(mapRowToItem);
-};
+export const getActiveItems = (): Promise<Item[]> =>
+  getItemsByQuery('SELECT * FROM items ORDER BY isCompleted ASC, created_at DESC');
 
-export const getOutOfStockStaples = async (): Promise<Item[]> => {
-  const db = getDb();
-  const result = await db.getAllAsync?.(
+export const getStapleItems = (): Promise<Item[]> =>
+  getItemsByQuery('SELECT * FROM items WHERE isStaple = 1 ORDER BY name ASC');
+
+export const getOutOfStockStaples = (): Promise<Item[]> =>
+  getItemsByQuery(
     'SELECT * FROM items WHERE isStaple = 1 AND isOutOfStock = 1 ORDER BY name ASC',
   );
-  return (result ?? []).map(mapRowToItem);
-};
+

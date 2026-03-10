@@ -1,21 +1,19 @@
-import * as SQLite from 'expo-sqlite';
+import { SQLiteDatabase, openDatabaseAsync } from 'expo-sqlite';
 
-export type SQLiteDatabase = SQLite.SQLiteDatabase;
+let dbPromise: Promise<SQLiteDatabase> | null = null;
 
-let dbInstance: SQLiteDatabase | null = null;
-
-export const getDb = (): SQLiteDatabase => {
-  if (!dbInstance) {
-    dbInstance = SQLite.openDatabase('grocerme.db');
+export const getDb = async (): Promise<SQLiteDatabase> => {
+  if (!dbPromise) {
+    dbPromise = openDatabaseAsync('grocerme.db');
   }
-  return dbInstance;
+  return dbPromise;
 };
 
-export const initializeDatabase = (): void => {
-  const db = getDb();
+export const initializeDatabase = async (): Promise<void> => {
+  const db = await getDb();
 
-  db.withTransactionAsync?.(async () => {
-    await db.execAsync?.(`
+  try {
+    await db.execAsync(`
       CREATE TABLE IF NOT EXISTS items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -44,7 +42,8 @@ export const initializeDatabase = (): void => {
         FOREIGN KEY (store_id) REFERENCES stores(id)
       );
     `);
-  }).catch?.((error: unknown) => {
+  } catch (error) {
     console.warn('Database initialization failed', error);
-  });
+  }
 };
+
