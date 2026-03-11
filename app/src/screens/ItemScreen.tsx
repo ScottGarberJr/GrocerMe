@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -14,17 +14,91 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/RootNavigator';
+import { useShopping } from '../state/ShoppingContext';
+import { addPriceHistoryEntry, getItemById, getLatestPriceForItem } from '../db/dal';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Item'>;
 
-export const ItemScreen: React.FC<Props> = ({ navigation }) => {
+export const ItemScreen: React.FC<Props> = ({ navigation, route }) => {
+  const { addItem, refresh } = useShopping();
   const [name, setName] = useState('');
   const [store, setStore] = useState('');
   const [price, setPrice] = useState('');
   const [isStaple, setIsStaple] = useState(true);
 
-  const handleSave = () => {
-    // For now, just navigate back; wiring into data comes later.
+  const itemId = route.params?.itemId;
+
+  useEffect(() => {
+    if (!itemId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const load = async () => {
+      const item = await getItemById(itemId);
+      if (!item || cancelled) return;
+
+      setName(item.name);
+      setIsStaple(item.isStaple);
+
+      const latestPrice = await getLatestPriceForItem(itemId);
+      if (cancelled || !latestPrice) return;
+
+      setStore(latestPrice.storeName);
+      setPrice(String(latestPrice.unitPrice));
+    };
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [itemId]);
+
+  const handleSave = async () => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      navigation.goBack();
+      return;
+    }
+
+    const storeName = store.trim();
+    const numericPrice = parseFloat(price);
+    const hasPrice = !!storeName && !Number.isNaN(numericPrice);
+
+    if (itemId) {
+      const { getDb } = await import('../db/schema');
+      const db = await getDb();
+      const now = new Date().toISOString();
+      await db.runAsync(
+        'UPDATE items SET name = ?, isStaple = ?, updated_at = ? WHERE id = ?',
+        [trimmedName, isStaple ? 1 : 0, now, itemId],
+      );
+
+      if (hasPrice) {
+        await addPriceHistoryEntry({
+          itemId,
+          storeName,
+          unitPrice: numericPrice,
+          kind: 'seen',
+        });
+      }
+
+      await refresh();
+    } else {
+      const newId = await addItem({ name: trimmedName, isStaple });
+
+      if (hasPrice && newId) {
+        await addPriceHistoryEntry({
+          itemId: newId,
+          storeName,
+          unitPrice: numericPrice,
+          kind: 'seen',
+        });
+      }
+    }
+
     navigation.goBack();
   };
 

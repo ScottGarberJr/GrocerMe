@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -11,10 +11,20 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/RootNavigator';
 import { useShopping } from '../state/ShoppingContext';
+import { getBestPricePerItem, getLatestPricePerItem } from '../db/dal';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'MyList'>;
 
 type Mode = 'store' | 'price' | 'latest';
+
+type ModePriceInfo = {
+  priceLabel: string;
+  storeName: string | null;
+};
+
+type ListRow =
+  | { type: 'header'; key: string; title: string }
+  | { type: 'item'; key: string; item: any };
 
 export const MyListScreen: React.FC<Props> = ({ navigation }) => {
   const {
@@ -29,6 +39,7 @@ export const MyListScreen: React.FC<Props> = ({ navigation }) => {
   const [showAllDetails, setShowAllDetails] = useState(false);
   const [query, setQuery] = useState('');
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const [modePriceMap, setModePriceMap] = useState<Record<number, ModePriceInfo>>({});
   const filteredItems = useMemo(
     () =>
       activeItems.filter(item =>
@@ -39,6 +50,61 @@ export const MyListScreen: React.FC<Props> = ({ navigation }) => {
     [activeItems, query],
   );
 
+  const formatPriceLabel = (price: number, storeName?: string | null) => {
+    const formatted = `$${price.toFixed(2)}`;
+    if (storeName && storeName.length > 0) {
+      return `${formatted} at ${storeName}`;
+    }
+    return formatted;
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadPrices = async () => {
+      if (activeItems.length === 0) {
+        if (!cancelled) {
+          setModePriceMap({});
+        }
+        return;
+      }
+
+      try {
+        if (mode === 'price') {
+          const rows = await getBestPricePerItem();
+          if (cancelled) return;
+          const next: Record<number, ModePriceInfo> = {};
+          for (const row of rows) {
+            next[row.itemId] = {
+              priceLabel: formatPriceLabel(row.unitPrice, row.storeName),
+              storeName: row.storeName,
+            };
+          }
+          setModePriceMap(next);
+        } else {
+          const rows = await getLatestPricePerItem();
+          if (cancelled) return;
+          const next: Record<number, ModePriceInfo> = {};
+          for (const row of rows) {
+            next[row.itemId] = {
+              priceLabel: formatPriceLabel(row.unitPrice, row.storeName),
+              storeName: row.storeName,
+            };
+          }
+          setModePriceMap(next);
+        }
+      } catch (error) {
+        console.warn('Failed to load price info', error);
+      }
+    };
+
+    loadPrices();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeItems, mode]);
+
   const handleRowPress = (id: string) => {
     if (showAllDetails) {
       return;
@@ -46,19 +112,20 @@ export const MyListScreen: React.FC<Props> = ({ navigation }) => {
     setExpandedId(current => (current === id ? null : id));
   };
 
-  const renderModeLabel = (item: { priceLabel?: string | null }) => {
-    if (!item.priceLabel) {
+  const renderModeLabel = (itemId: number) => {
+    const info = modePriceMap[itemId];
+    if (!info?.priceLabel) {
       return 'No price yet';
     }
     if (mode === 'store') {
-      return item.priceLabel;
+      return info.priceLabel;
     }
 
     if (mode === 'price') {
-      return `Lowest: ${item.priceLabel}`;
+      return `Lowest: ${info.priceLabel}`;
     }
 
-    return `Latest: ${item.priceLabel}`;
+    return `Latest: ${info.priceLabel}`;
   };
 
   const currentModeLabel = () => {
@@ -66,6 +133,39 @@ export const MyListScreen: React.FC<Props> = ({ navigation }) => {
     if (mode === 'price') return 'Price mode';
     return 'Latest mode';
   };
+
+  const listRows: ListRow[] = useMemo(() => {
+    if (mode !== 'store') {
+      return filteredItems.map(item => ({
+        type: 'item',
+        key: `item-${item.id}`,
+        item,
+      }));
+    }
+
+    const groups: Record<string, any[]> = {};
+    const order: string[] = [];
+
+    filteredItems.forEach(item => {
+      const info = modePriceMap[item.id];
+      const title = info?.storeName && info.storeName.length > 0 ? info.storeName : 'No store set';
+      if (!groups[title]) {
+        groups[title] = [];
+        order.push(title);
+      }
+      groups[title].push(item);
+    });
+
+    const rows: ListRow[] = [];
+    order.forEach(title => {
+      rows.push({ type: 'header', key: `header-${title}`, title });
+      groups[title].forEach(item => {
+        rows.push({ type: 'item', key: `item-${item.id}`, item });
+      });
+    });
+
+    return rows;
+  }, [filteredItems, mode, modePriceMap]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -150,10 +250,19 @@ export const MyListScreen: React.FC<Props> = ({ navigation }) => {
       )}
 
       <FlatList
-        data={filteredItems}
-        keyExtractor={item => String(item.id)}
+        data={listRows}
+        keyExtractor={row => row.key}
         contentContainerStyle={styles.listContent}
-        renderItem={({ item }) => {
+        renderItem={({ item: row }) => {
+          if (row.type === 'header') {
+            return (
+              <View style={styles.storeHeaderRow}>
+                <Text style={styles.storeHeaderText}>{row.title}</Text>
+              </View>
+            );
+          }
+
+          const item = row.item;
           const isExpanded = showAllDetails || expandedId === item.id;
 
           return (
@@ -176,10 +285,10 @@ export const MyListScreen: React.FC<Props> = ({ navigation }) => {
                 </Text>
                 {isExpanded && (
                   <View style={styles.itemDetailRow}>
-                    <Text style={styles.itemDetailText}>{renderModeLabel(item)}</Text>
+                    <Text style={styles.itemDetailText}>{renderModeLabel(item.id)}</Text>
                     <TouchableOpacity
                       style={styles.itemActionButton}
-                      onPress={() => navigation.navigate('Item')}
+                      onPress={() => navigation.navigate('Item', { itemId: item.id })}
                     >
                       <Text style={styles.itemActionText}>Open</Text>
                     </TouchableOpacity>
@@ -364,6 +473,18 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: 16,
     paddingVertical: 8,
+  },
+  storeHeaderRow: {
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E4E7EB',
+    backgroundColor: '#F2F4F7',
+    paddingHorizontal: 4,
+  },
+  storeHeaderText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#52606D',
   },
   itemRow: {
     flexDirection: 'row',

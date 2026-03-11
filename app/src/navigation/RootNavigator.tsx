@@ -9,7 +9,7 @@ import { SettingsScreen } from '../screens/SettingsScreen';
 export type RootStackParamList = {
   MyList: undefined;
   Staples: undefined;
-  Item: undefined;
+  Item: { itemId?: number } | undefined;
   Settings: undefined;
 };
 

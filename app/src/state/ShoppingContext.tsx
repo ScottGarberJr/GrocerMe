@@ -21,7 +21,7 @@ type ShoppingContextValue = {
   refresh: () => Promise<void>;
   toggleItemCompleted: (id: number, isCompleted: boolean) => Promise<void>;
   toggleStapleOutOfStock: (id: number, isOutOfStock: boolean) => Promise<void>;
-  addItem: (args: { name: string; isStaple: boolean }) => Promise<void>;
+  addItem: (args: { name: string; isStaple: boolean }) => Promise<number>;
 };
 
 const ShoppingContext = createContext<ShoppingContextValue | undefined>(
@@ -96,12 +96,13 @@ export const ShoppingProvider: React.FC<{ children: React.ReactNode }> = ({
       const { getDb } = await import('../db/schema');
       const db = await getDb();
       const now = new Date().toISOString();
-      await db.runAsync(
+      const result = await db.runAsync(
         `INSERT INTO items (name, isStaple, isCompleted, isOutOfStock, created_at, updated_at)
          VALUES (?, ?, 0, 0, ?, ?)`,
         [name.trim(), isStaple ? 1 : 0, now, now],
       );
       await loadAll();
+      return result.lastInsertRowId;
     },
     [loadAll],
   );
