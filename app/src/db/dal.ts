@@ -45,15 +45,55 @@ const getItemsByQuery = async (
   return rows.map(mapRowToItem);
 };
 
-export const getActiveItems = (): Promise<Item[]> =>
-  getItemsByQuery('SELECT * FROM items ORDER BY isCompleted ASC, created_at DESC');
+export const getActiveItems = async (): Promise<Item[]> => {
+  const items = await getItemsByQuery(
+    `SELECT
+       i.*,
+       CASE WHEN st.item_id IS NULL THEN 0 ELSE 1 END AS isStaple,
+       0 AS isCompleted,
+       COALESCE(st.isOutOfStock, 0) AS isOutOfStock
+     FROM items i
+     JOIN my_list_entries mle ON mle.item_id = i.id AND mle.status = 'active'
+     LEFT JOIN staples st ON st.item_id = i.id
+     ORDER BY
+       CASE WHEN mle.sortOrder IS NULL THEN 1 ELSE 0 END,
+       mle.sortOrder ASC,
+       mle.created_at DESC`,
+  );
+  console.log('[DB] getActiveItems returned', items.length, 'rows');
+  return items;
+};
 
 export const getStapleItems = (): Promise<Item[]> =>
-  getItemsByQuery('SELECT * FROM items WHERE isStaple = 1 ORDER BY name ASC');
+  getItemsByQuery(
+    `SELECT
+       i.*,
+       1 AS isStaple,
+       CASE WHEN mle.id IS NULL THEN 0 ELSE 1 END AS isCompleted,
+       st.isOutOfStock AS isOutOfStock
+     FROM staples st
+     JOIN items i ON i.id = st.item_id
+     LEFT JOIN my_list_entries mle
+       ON mle.item_id = i.id AND mle.status = 'active'
+     ORDER BY
+       CASE WHEN st.sortOrder IS NULL THEN 1 ELSE 0 END,
+       st.sortOrder ASC,
+       name ASC`,
+  );
 
 export const getOutOfStockStaples = (): Promise<Item[]> =>
   getItemsByQuery(
-    'SELECT * FROM items WHERE isStaple = 1 AND isOutOfStock = 1 ORDER BY name ASC',
+    `SELECT
+       i.*,
+       1 AS isStaple,
+       CASE WHEN mle.id IS NULL THEN 0 ELSE 1 END AS isCompleted,
+       st.isOutOfStock AS isOutOfStock
+     FROM staples st
+     JOIN items i ON i.id = st.item_id
+     LEFT JOIN my_list_entries mle
+       ON mle.item_id = i.id AND mle.status = 'active'
+     WHERE st.isOutOfStock = 1
+     ORDER BY i.name ASC`,
   );
 
 export const getItemById = async (id: number): Promise<Item | null> => {
@@ -61,6 +101,187 @@ export const getItemById = async (id: number): Promise<Item | null> => {
   const row = await db.getFirstAsync<any>('SELECT * FROM items WHERE id = ?', [id]);
   if (!row) return null;
   return mapRowToItem(row);
+};
+
+export const createItem = async (args: {
+  name: string;
+  isStaple: boolean;
+}): Promise<number> => {
+  const db = await getDb();
+  const now = new Date().toISOString();
+  const result = await db.runAsync(
+    `INSERT INTO items (name, isStaple, isCompleted, isOutOfStock, created_at, updated_at)
+     VALUES (?, ?, 1, 0, ?, ?)`,
+    [args.name.trim(), args.isStaple ? 1 : 0, now, now],
+  );
+
+  if (args.isStaple) {
+    await db.runAsync(
+      `INSERT OR IGNORE INTO staples (item_id, isOutOfStock, created_at, updated_at)
+       VALUES (?, 0, ?, ?)`,
+      [result.lastInsertRowId, now, now],
+    );
+  }
+
+  return result.lastInsertRowId;
+};
+
+export const addItemToMyList = async (itemId: number): Promise<void> => {
+  const db = await getDb();
+  const now = new Date().toISOString();
+
+  // Check for ANY existing row — active or completed.
+  const existing = await db.getFirstAsync<{ id: number; status: string }>(
+    `SELECT id, status FROM my_list_entries WHERE item_id = ? LIMIT 1`,
+    [itemId],
+  );
+
+  if (existing) {
+    if (existing.status === 'active') {
+      // Already on the list — nothing to do.
+      console.log('[DB] addItemToMyList: already active, item', itemId);
+      return;
+    }
+    // Re-activate a completed row.
+    console.log('[DB] addItemToMyList: re-activating completed row for item', itemId);
+    await db.runAsync(
+      `UPDATE my_list_entries SET status = 'active', updated_at = ? WHERE id = ?`,
+      [now, existing.id],
+    );
+  } else {
+    console.log('[DB] addItemToMyList: inserting new row for item', itemId);
+    await db.runAsync(
+      `INSERT INTO my_list_entries (item_id, status, created_at, updated_at)
+       VALUES (?, 'active', ?, ?)`,
+      [itemId, now, now],
+    );
+  }
+
+  // Legacy mirror for existing local DB compatibility.
+  await db.runAsync(
+    'UPDATE items SET isCompleted = 0, updated_at = ? WHERE id = ?',
+    [now, itemId],
+  );
+};
+
+export const removeItemFromMyList = async (itemId: number): Promise<void> => {
+  const db = await getDb();
+  const now = new Date().toISOString();
+  await db.runAsync(
+    `DELETE FROM my_list_entries
+     WHERE item_id = ? AND status = 'active'`,
+    [itemId],
+  );
+
+  // Legacy mirror for existing local DB compatibility.
+  await db.runAsync(
+    'UPDATE items SET isCompleted = 1, updated_at = ? WHERE id = ?',
+    [now, itemId],
+  );
+};
+
+export const setItemCompleted = async (
+  itemId: number,
+  isCompleted: boolean,
+): Promise<void> => {
+  const db = await getDb();
+  const now = new Date().toISOString();
+
+  if (isCompleted) {
+    await db.runAsync(
+      `UPDATE my_list_entries
+       SET status = 'completed', updated_at = ?
+       WHERE item_id = ? AND status = 'active'`,
+      [now, itemId],
+    );
+    await db.runAsync('UPDATE items SET isCompleted = 1, updated_at = ? WHERE id = ?', [
+      now,
+      itemId,
+    ]);
+  } else {
+    await addItemToMyList(itemId);
+  }
+};
+
+export const setItemIsStaple = async (
+  itemId: number,
+  isStaple: boolean,
+): Promise<void> => {
+  const db = await getDb();
+  const now = new Date().toISOString();
+
+  await db.runAsync('UPDATE items SET isStaple = ?, updated_at = ? WHERE id = ?', [
+    isStaple ? 1 : 0,
+    now,
+    itemId,
+  ]);
+
+  if (isStaple) {
+    await db.runAsync(
+      `INSERT OR IGNORE INTO staples (item_id, isOutOfStock, created_at, updated_at)
+       VALUES (?, 0, ?, ?)`,
+      [itemId, now, now],
+    );
+    await db.runAsync('UPDATE staples SET updated_at = ? WHERE item_id = ?', [
+      now,
+      itemId,
+    ]);
+  } else {
+    await db.runAsync('DELETE FROM staples WHERE item_id = ?', [itemId]);
+  }
+};
+
+export const setStapleOutOfStock = async (
+  itemId: number,
+  isOutOfStock: boolean,
+): Promise<void> => {
+  const db = await getDb();
+  const now = new Date().toISOString();
+  await db.runAsync(
+    `UPDATE staples
+     SET isOutOfStock = ?, updated_at = ?
+     WHERE item_id = ?`,
+    [isOutOfStock ? 1 : 0, now, itemId],
+  );
+
+  // Legacy mirror while old columns still exist.
+  await db.runAsync('UPDATE items SET isOutOfStock = ?, updated_at = ? WHERE id = ?', [
+    isOutOfStock ? 1 : 0,
+    now,
+    itemId,
+  ]);
+};
+
+export const reorderMyListItems = async (orderedIds: number[]): Promise<void> => {
+  if (orderedIds.length === 0) return;
+  const db = await getDb();
+  const now = new Date().toISOString();
+
+  let position = 0;
+  for (const itemId of orderedIds) {
+    await db.runAsync(
+      `UPDATE my_list_entries
+       SET sortOrder = ?, updated_at = ?
+       WHERE item_id = ? AND status = 'active'`,
+      [position++, now, itemId],
+    );
+  }
+};
+
+export const reorderStapleItems = async (orderedIds: number[]): Promise<void> => {
+  if (orderedIds.length === 0) return;
+  const db = await getDb();
+  const now = new Date().toISOString();
+
+  let position = 0;
+  for (const itemId of orderedIds) {
+    await db.runAsync(
+      `UPDATE staples
+       SET sortOrder = ?, updated_at = ?
+       WHERE item_id = ?`,
+      [position++, now, itemId],
+    );
+  }
 };
 
 export const getOrCreateStoreByName = async (name: string): Promise<Store> => {

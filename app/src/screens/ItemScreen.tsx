@@ -20,7 +20,7 @@ import { addPriceHistoryEntry, getItemById, getLatestPriceForItem } from '../db/
 type Props = NativeStackScreenProps<RootStackParamList, 'Item'>;
 
 export const ItemScreen: React.FC<Props> = ({ navigation, route }) => {
-  const { addItem, refresh } = useShopping();
+  const { addItem, refresh, setItemIsStaple } = useShopping();
   const [name, setName] = useState('');
   const [store, setStore] = useState('');
   const [price, setPrice] = useState('');
@@ -72,9 +72,10 @@ export const ItemScreen: React.FC<Props> = ({ navigation, route }) => {
       const db = await getDb();
       const now = new Date().toISOString();
       await db.runAsync(
-        'UPDATE items SET name = ?, isStaple = ?, updated_at = ? WHERE id = ?',
-        [trimmedName, isStaple ? 1 : 0, now, itemId],
+        'UPDATE items SET name = ?, updated_at = ? WHERE id = ?',
+        [trimmedName, now, itemId],
       );
+      await setItemIsStaple(itemId, isStaple);
 
       if (hasPrice) {
         await addPriceHistoryEntry({

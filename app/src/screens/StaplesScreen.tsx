@@ -3,11 +3,14 @@ import {
   View,
   Text,
   StyleSheet,
-  FlatList,
   TouchableOpacity,
   TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Swipeable } from 'react-native-gesture-handler';
+import DraggableFlatList, {
+  type RenderItemParams,
+} from 'react-native-draggable-flatlist';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/RootNavigator';
 import { useShopping } from '../state/ShoppingContext';
@@ -15,8 +18,18 @@ import { useShopping } from '../state/ShoppingContext';
 type Props = NativeStackScreenProps<RootStackParamList, 'Staples'>;
 
 export const StaplesScreen: React.FC<Props> = ({ navigation }) => {
-  const { stapleItems, toggleStapleOutOfStock, addItem } = useShopping();
+  const {
+    activeItems,
+    stapleItems,
+    toggleStapleOutOfStock,
+    addItem,
+    removeItemFromStaples,
+    setItemIsStaple,
+    reorderStapleItems,
+  } = useShopping();
   const [query, setQuery] = useState('');
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [listData, setListData] = useState<any[]>([]);
 
   const filteredStaples = useMemo(
     () =>
@@ -27,6 +40,13 @@ export const StaplesScreen: React.FC<Props> = ({ navigation }) => {
       ),
     [stapleItems, query],
   );
+
+  // Local order for drag-and-drop when no search query is active.
+  React.useEffect(() => {
+    if (!query.trim()) {
+      setListData(filteredStaples);
+    }
+  }, [filteredStaples, query]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -72,7 +92,7 @@ export const StaplesScreen: React.FC<Props> = ({ navigation }) => {
             onPress={async () => {
               const name = query.trim();
               if (!name) return;
-              await addItem({ name, isStaple: true });
+              await addItem({ name, isStaple: true, addToMyList: false });
               setQuery('');
             }}
           >
@@ -83,15 +103,21 @@ export const StaplesScreen: React.FC<Props> = ({ navigation }) => {
 
           {(() => {
             const lower = query.trim().toLowerCase();
-            const matches = stapleItems.filter(item =>
-              item.name.toLowerCase().includes(lower),
-            );
+            const all = [...stapleItems, ...activeItems];
+            const seen = new Set<number>();
+            const matches = all.filter(item => {
+              if (!item.name.toLowerCase().includes(lower)) return false;
+              if (seen.has(item.id)) return false;
+              seen.add(item.id);
+              return true;
+            });
             if (matches.length === 0) return null;
             return matches.map(item => (
               <TouchableOpacity
                 key={item.id}
                 style={styles.suggestionRow}
-                onPress={() => {
+                onPress={async () => {
+                  await setItemIsStaple(item.id, true);
                   setQuery('');
                 }}
               >
@@ -102,31 +128,91 @@ export const StaplesScreen: React.FC<Props> = ({ navigation }) => {
         </View>
       )}
 
-      <FlatList
-        data={filteredStaples}
-        keyExtractor={item => String(item.id)}
+      <DraggableFlatList
+        pointerEvents={query.trim().length > 0 ? 'none' : 'auto'}
+        data={listData}
+        keyExtractor={(item: any) => String(item.id)}
         contentContainerStyle={styles.listContent}
-        renderItem={({ item }) => (
-          <View style={styles.row}>
-            <Text style={styles.name}>{item.name}</Text>
+        onDragEnd={async ({ data }: { data: any[] }) => {
+          setListData(data);
+          const orderedIds = data.map((x: any) => x.id as number);
+          await reorderStapleItems(orderedIds);
+        }}
+        renderItem={({ item, drag, isActive }: RenderItemParams<any>) => {
+          const isExpanded = expandedId === item.id;
+
+          const rightActions = () => (
             <TouchableOpacity
-              style={[
-                styles.flagPill,
-                item.isOutOfStock && styles.flagPillActive,
-              ]}
-              onPress={() => toggleStapleOutOfStock(item.id, !item.isOutOfStock)}
+              style={styles.removeAction}
+              onPress={async () => {
+                await removeItemFromStaples(item.id);
+              }}
             >
-              <Text
-                style={[
-                  styles.flagText,
-                  item.isOutOfStock && styles.flagTextActive,
-                ]}
-              >
-                {item.isOutOfStock ? 'Out of stock' : 'In stock'}
-              </Text>
+              <Text style={styles.removeActionText}>Remove</Text>
             </TouchableOpacity>
-          </View>
-        )}
+          );
+
+          return (
+            <Swipeable renderRightActions={rightActions} overshootRight={false}>
+              <TouchableOpacity
+                style={[styles.row, isActive && styles.rowActive]}
+                onPress={() =>
+                  setExpandedId(current =>
+                    current === item.id ? null : item.id,
+                  )
+                }
+                onLongPress={drag}
+                delayLongPress={150}
+              >
+                <View style={styles.dragHandleContainer}>
+                  <View style={styles.dragDotRow}>
+                    <View style={styles.dragDot} />
+                    <View style={styles.dragDot} />
+                  </View>
+                  <View style={styles.dragDotRow}>
+                    <View style={styles.dragDot} />
+                    <View style={styles.dragDot} />
+                  </View>
+                </View>
+
+                <View style={styles.rowMain}>
+                  <Text style={styles.name}>{item.name}</Text>
+                  <TouchableOpacity
+                    style={[
+                      styles.flagPill,
+                      item.isOutOfStock && styles.flagPillActive,
+                    ]}
+                    onPress={() =>
+                      toggleStapleOutOfStock(item.id, !item.isOutOfStock)
+                    }
+                  >
+                    <Text
+                      style={[
+                        styles.flagText,
+                        item.isOutOfStock && styles.flagTextActive,
+                      ]}
+                    >
+                      {item.isOutOfStock ? 'Out of stock' : 'In stock'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {isExpanded && (
+                  <View style={styles.itemDetailRow}>
+                    <TouchableOpacity
+                      style={styles.itemActionButton}
+                      onPress={() =>
+                        navigation.navigate('Item', { itemId: item.id })
+                      }
+                    >
+                      <Text style={styles.itemActionText}>Open</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </TouchableOpacity>
+            </Swipeable>
+          );
+        }}
       />
     </SafeAreaView>
   );
@@ -196,6 +282,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
+    zIndex: 10,
     shadowColor: '#000',
     shadowOpacity: 0.06,
     shadowRadius: 6,
@@ -233,6 +320,15 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#E4E7EB',
   },
+  rowActive: {
+    backgroundColor: '#F0F4FF',
+  },
+  rowMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   name: {
     fontSize: 16,
     color: '#1F2933',
@@ -256,5 +352,49 @@ const styles = StyleSheet.create({
   flagTextActive: {
     color: '#F35627',
     fontWeight: '600',
+  },
+  dragHandleContainer: {
+    width: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  dragDotRow: {
+    flexDirection: 'row',
+    marginVertical: 1,
+  },
+  dragDot: {
+    width: 3,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: '#9FB3C8',
+    marginHorizontal: 1,
+  },
+  itemDetailRow: {
+    marginTop: 6,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  itemActionButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: '#F2F4F7',
+  },
+  itemActionText: {
+    fontSize: 13,
+    color: '#2D6CDF',
+    fontWeight: '500',
+  },
+  removeAction: {
+    width: 90,
+    backgroundColor: '#F9703E',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  removeActionText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 14,
   },
 });

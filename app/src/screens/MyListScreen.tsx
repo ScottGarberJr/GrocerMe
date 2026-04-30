@@ -3,11 +3,15 @@ import {
   View,
   Text,
   StyleSheet,
-  FlatList,
   TouchableOpacity,
   TextInput,
+  FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Swipeable } from 'react-native-gesture-handler';
+import DraggableFlatList, {
+  type RenderItemParams,
+} from 'react-native-draggable-flatlist';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/RootNavigator';
 import { useShopping } from '../state/ShoppingContext';
@@ -33,6 +37,9 @@ export const MyListScreen: React.FC<Props> = ({ navigation }) => {
     outOfStockStaples,
     toggleItemCompleted,
     addItem,
+    addItemToMyList,
+    removeItemFromMyList,
+    reorderMyListItems,
   } = useShopping();
   const [mode, setMode] = useState<Mode>('latest');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -40,6 +47,7 @@ export const MyListScreen: React.FC<Props> = ({ navigation }) => {
   const [query, setQuery] = useState('');
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [modePriceMap, setModePriceMap] = useState<Record<number, ModePriceInfo>>({});
+  const [listData, setListData] = useState<any[]>([]);
   const filteredItems = useMemo(
     () =>
       activeItems.filter(item =>
@@ -49,6 +57,14 @@ export const MyListScreen: React.FC<Props> = ({ navigation }) => {
       ),
     [activeItems, query],
   );
+
+  // Keep a local copy of the current list order for drag-and-drop in
+  // non-store modes when no search query is active.
+  useEffect(() => {
+    if (!query.trim() && mode !== 'store') {
+      setListData(filteredItems);
+    }
+  }, [filteredItems, query, mode]);
 
   const formatPriceLabel = (price: number, storeName?: string | null) => {
     const formatted = `$${price.toFixed(2)}`;
@@ -136,11 +152,7 @@ export const MyListScreen: React.FC<Props> = ({ navigation }) => {
 
   const listRows: ListRow[] = useMemo(() => {
     if (mode !== 'store') {
-      return filteredItems.map(item => ({
-        type: 'item',
-        key: `item-${item.id}`,
-        item,
-      }));
+      return [];
     }
 
     const groups: Record<string, any[]> = {};
@@ -166,6 +178,72 @@ export const MyListScreen: React.FC<Props> = ({ navigation }) => {
 
     return rows;
   }, [filteredItems, mode, modePriceMap]);
+
+  const renderDraggableItem = ({
+    item,
+    drag,
+    isActive,
+  }: RenderItemParams<any>) => {
+    const isExpanded = showAllDetails || expandedId === item.id;
+
+    const rightActions = () => (
+      <TouchableOpacity
+        style={styles.removeAction}
+        onPress={async () => {
+          await removeItemFromMyList(item.id);
+        }}
+      >
+        <Text style={styles.removeActionText}>Remove</Text>
+      </TouchableOpacity>
+    );
+
+    return (
+      <Swipeable renderRightActions={rightActions} overshootRight={false}>
+        <TouchableOpacity
+          style={[styles.itemRow, isActive && styles.itemRowActive]}
+          onPress={() => handleRowPress(item.id)}
+          onLongPress={drag}
+          delayLongPress={150}
+        >
+          <View style={styles.dragHandleContainer}>
+            <View style={styles.dragDotRow}>
+              <View style={styles.dragDot} />
+              <View style={styles.dragDot} />
+            </View>
+            <View style={styles.dragDotRow}>
+              <View style={styles.dragDot} />
+              <View style={styles.dragDot} />
+            </View>
+          </View>
+          <TouchableOpacity
+            style={[styles.checkbox, item.isCompleted && styles.checkboxChecked]}
+            onPress={() => toggleItemCompleted(item.id, !item.isCompleted)}
+          />
+          <View style={styles.itemTextContainer}>
+            <Text
+              style={[
+                styles.itemName,
+                item.isCompleted && styles.itemNameCompleted,
+              ]}
+            >
+              {item.name}
+            </Text>
+            {isExpanded && (
+              <View style={styles.itemDetailRow}>
+                <Text style={styles.itemDetailText}>{renderModeLabel(item.id)}</Text>
+                <TouchableOpacity
+                  style={styles.itemActionButton}
+                  onPress={() => navigation.navigate('Item', { itemId: item.id })}
+                >
+                  <Text style={styles.itemActionText}>Open</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </TouchableOpacity>
+      </Swipeable>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -249,56 +327,92 @@ export const MyListScreen: React.FC<Props> = ({ navigation }) => {
         </View>
       )}
 
-      <FlatList
-        data={listRows}
-        keyExtractor={row => row.key}
-        contentContainerStyle={styles.listContent}
-        renderItem={({ item: row }) => {
-          if (row.type === 'header') {
-            return (
-              <View style={styles.storeHeaderRow}>
-                <Text style={styles.storeHeaderText}>{row.title}</Text>
-              </View>
-            );
-          }
+      <View
+        style={styles.listContainer}
+        pointerEvents={query.trim().length > 0 ? 'none' : 'auto'}
+      >
+        {mode === 'store' ? (
+          <FlatList
+            style={styles.list}
+            data={listRows}
+            keyExtractor={(row: ListRow) => row.key}
+            contentContainerStyle={styles.listContent}
+            renderItem={({ item: row }) => {
+            if (row.type === 'header') {
+              return (
+                <View style={styles.storeHeaderRow}>
+                  <Text style={styles.storeHeaderText}>{row.title}</Text>
+                </View>
+              );
+            }
 
-          const item = row.item;
-          const isExpanded = showAllDetails || expandedId === item.id;
+            const item = row.item;
+            const isExpanded = showAllDetails || expandedId === item.id;
 
-          return (
-            <TouchableOpacity
-              style={styles.itemRow}
-              onPress={() => handleRowPress(item.id)}
-            >
+            const rightActions = () => (
               <TouchableOpacity
-                style={[styles.checkbox, item.isCompleted && styles.checkboxChecked]}
-                onPress={() => toggleItemCompleted(item.id, !item.isCompleted)}
-              />
-              <View style={styles.itemTextContainer}>
-                <Text
-                  style={[
-                    styles.itemName,
-                    item.isCompleted && styles.itemNameCompleted,
-                  ]}
+                style={styles.removeAction}
+                onPress={async () => {
+                  await removeItemFromMyList(item.id);
+                }}
+              >
+                <Text style={styles.removeActionText}>Remove</Text>
+              </TouchableOpacity>
+            );
+
+            return (
+              <Swipeable renderRightActions={rightActions} overshootRight={false}>
+                <TouchableOpacity
+                  style={styles.itemRow}
+                  onPress={() => handleRowPress(item.id)}
                 >
-                  {item.name}
-                </Text>
-                {isExpanded && (
-                  <View style={styles.itemDetailRow}>
-                    <Text style={styles.itemDetailText}>{renderModeLabel(item.id)}</Text>
-                    <TouchableOpacity
-                      style={styles.itemActionButton}
-                      onPress={() => navigation.navigate('Item', { itemId: item.id })}
+                  <TouchableOpacity
+                    style={[styles.checkbox, item.isCompleted && styles.checkboxChecked]}
+                    onPress={() => toggleItemCompleted(item.id, !item.isCompleted)}
+                  />
+                  <View style={styles.itemTextContainer}>
+                    <Text
+                      style={[
+                        styles.itemName,
+                        item.isCompleted && styles.itemNameCompleted,
+                      ]}
                     >
-                      <Text style={styles.itemActionText}>Open</Text>
-                    </TouchableOpacity>
+                      {item.name}
+                    </Text>
+                    {isExpanded && (
+                      <View style={styles.itemDetailRow}>
+                        <Text style={styles.itemDetailText}>{renderModeLabel(item.id)}</Text>
+                        <TouchableOpacity
+                          style={styles.itemActionButton}
+                          onPress={() =>
+                            navigation.navigate('Item', { itemId: item.id })
+                          }
+                        >
+                          <Text style={styles.itemActionText}>Open</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
                   </View>
-                )}
-              </View>
-            </TouchableOpacity>
-          );
-        }}
-      />
+                </TouchableOpacity>
+              </Swipeable>
+            );
+            }}
+          />
+        ) : (
+          <DraggableFlatList
+            style={styles.list}
+            data={listData}
+            keyExtractor={(item: any) => String(item.id)}
+            contentContainerStyle={styles.listContent}
+            onDragEnd={async ({ data }: { data: any[] }) => {
+              setListData(data);
+              const orderedIds = data.map((x: any) => x.id as number);
+              await reorderMyListItems(orderedIds);
+            }}
+            renderItem={renderDraggableItem}
+          />
+        )}
+      </View>
 
       <View style={styles.bottomControlsRow}>
         <View style={styles.modeSwitcher}>
@@ -367,7 +481,13 @@ export const MyListScreen: React.FC<Props> = ({ navigation }) => {
               outOfStockStaples.map(item => (
                 <View key={item.id} style={styles.bottomStripPill}>
                   <Text style={styles.bottomStripPillText}>{item.name}</Text>
-                  <Text style={styles.bottomStripPlus}>+</Text>
+                  <TouchableOpacity
+                    onPress={async () => {
+                      await addItemToMyList(item.id);
+                    }}
+                  >
+                    <Text style={styles.bottomStripPlus}>+</Text>
+                  </TouchableOpacity>
                 </View>
               ))
             )}
@@ -445,6 +565,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
+    zIndex: 10,
     shadowColor: '#000',
     shadowOpacity: 0.06,
     shadowRadius: 6,
@@ -474,6 +595,29 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
   },
+  listContainer: {
+    flex: 1,
+  },
+  list: {
+    flex: 1,
+  },
+  dragHandleContainer: {
+    width: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  dragDotRow: {
+    flexDirection: 'row',
+    marginVertical: 1,
+  },
+  dragDot: {
+    width: 3,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: '#9FB3C8',
+    marginHorizontal: 1,
+  },
   storeHeaderRow: {
     paddingVertical: 6,
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -492,6 +636,9 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#E4E7EB',
+  },
+  itemRowActive: {
+    backgroundColor: '#F0F4FF',
   },
   checkbox: {
     width: 22,
@@ -642,5 +789,16 @@ const styles = StyleSheet.create({
   bottomStripHint: {
     fontSize: 12,
     color: '#9FB3C8',
+  },
+  removeAction: {
+    width: 90,
+    backgroundColor: '#F9703E',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  removeActionText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 14,
   },
 });
